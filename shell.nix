@@ -7,5 +7,6 @@ pkgs.haskellPackages.shellFor {
   buildInputs = [
     pkgs.cabal-install
     pkgs.haskell-language-server
+    pkgs.ghcid
   ];
 }
