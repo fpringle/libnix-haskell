@@ -167,6 +167,18 @@ buildOp op = do
       >>= traverse (toNixFilePath StorePath)
 
 ------------------------------------------------------------------------------
+-- nix-env commands
+
+data EnvError = UnknownEnvError
+  deriving (Show, Eq)
+
+envOp :: (MonadIO m) => [Text] -> NixAction EnvError m [Text]
+envOp op = do
+  exec <- Helpers.getExecOr exeNixBuild "nix-build"
+  mapActionError (const UnknownEnvError)
+    $ evalNixOutput exec op
+
+------------------------------------------------------------------------------
 -- Convenience
 
 -- | Combines all error types that could happen.
