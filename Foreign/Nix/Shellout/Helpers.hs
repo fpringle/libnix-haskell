@@ -1,26 +1,22 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE ViewPatterns #-}
 module Foreign.Nix.Shellout.Helpers where
 
-import Foreign.Nix.Shellout.Types ( NixActionError(..), RunOptions (logFn, executables), LogFn (LogFn), NixAction, Executables )
+import Foreign.Nix.Shellout.Types ( NixActionError(..), RunOptions (..), LogFn (LogFn), NixAction, Executables )
 import qualified System.Process as P
-import qualified Data.Text.IO as TIO
-import qualified Data.Text as T
 import qualified System.IO as SIO
 
--- needed for ignoreSigPipe
--- needed for ignoreSigPipe
-import GHC.IO.Exception (IOErrorType(..), IOException(..), ExitCode)
-import Foreign.C.Error (Errno(Errno), ePIPE)
+import GHC.IO.Exception (ExitCode)
 import Data.Text (Text)
 import Control.Error (ExceptT, runExceptT)
-import Control.Concurrent (MVar, newEmptyMVar, forkIO, takeMVar, putMVar, killThread)
 import Control.DeepSeq (rnf)
 
-import Control.Exception (SomeException, throwIO, onException, try, mask, handle, evaluate)
+import Control.Exception (evaluate)
 
-import Control.Monad (unless)
+import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO, MonadIO)
 import qualified Data.Text as Text
 import Control.Monad.Except (MonadError (throwError))
@@ -28,12 +24,18 @@ import Control.Monad.Reader (asks)
 import Control.Monad.Trans (lift)
 import Data.Function ((&))
 
+import qualified Conduit as C
+import qualified Data.ByteString as BS
+import qualified Data.Conduit.Process as C
+import qualified Data.Text.Encoding as TE
+
 -- | Something we can run
 data Executable =
   ExeFromPathEnv Text
   -- ^ name of the executable, to be looked up in PATH
   | ExeFromFilePath FilePath
   -- ^ a file path to the executable (can be relative or absolute)
+  deriving Show
 
 -- | Get an executable from the 'Executables' option (by its getter)
 -- or if not set use the given 'Text' as the name of the excutable
@@ -64,9 +66,11 @@ readProcess with exec args = do
   (LogFn l) <- asks logFn
   lift $ l exec' args
 
+  debug <- asks printStdErr
+
   (exc, out, err) <- liftIO
     $ readCreateProcessWithExitCodeAndEncoding
-        (P.proc (Text.unpack exec') (map Text.unpack args)) SIO.utf8 ""
+        (P.proc (Text.unpack exec') (map Text.unpack args)) debug SIO.utf8 ""
   lift (runExceptT (with (out, err) exc)) >>= \case
     Left e ->
       throwError $ NixActionError
@@ -81,70 +85,31 @@ readProcess with exec args = do
 -- | for the handles.
 readCreateProcessWithExitCodeAndEncoding
     :: P.CreateProcess
+    -> Bool                        -- ^ print stderr?
     -> SIO.TextEncoding            -- ^ encoding for handles
     -> Text                        -- ^ standard input
     -> IO (ExitCode, Text, Text)   -- ^ exitcode, stdout, stderr
-readCreateProcessWithExitCodeAndEncoding cp encoding input = do
+readCreateProcessWithExitCodeAndEncoding cp debug encoding input = do
     let cp_opts = cp
           { P.std_in  = P.CreatePipe
           , P.std_out = P.CreatePipe
           , P.std_err = P.CreatePipe }
-    -- todo: this is not exposed by System.Process
-    -- withCreateProcess_ "readCreateProcessWithExitCode" cp_opts $
-    P.withCreateProcess cp_opts $
-      \(Just inh) (Just outh) (Just errh) ph -> do
 
-        SIO.hSetEncoding outh encoding
-        SIO.hSetEncoding errh encoding
-        SIO.hSetEncoding inh encoding
+    -- TODO: encoding
 
-        out <- TIO.hGetContents outh
-        err <- TIO.hGetContents errh
+    let stdInC  :: C.ConduitT () BS.ByteString IO () = C.yield input C..| C.encodeUtf8C
+        stdOutC :: C.ConduitT BS.ByteString C.Void IO BS.ByteString = BS.toStrict <$> C.sinkLazy
+        stdErrC :: C.ConduitT BS.ByteString C.Void IO BS.ByteString = go ""
+          where
+            go acc = do
+              mChunk <- C.await
+              case mChunk of
+                Nothing -> pure acc
+                Just chunk -> do
+                  when debug . liftIO $ BS.hPutStr SIO.stderr chunk
+                  go (acc <> chunk)
 
-        -- fork off threads to start consuming stdout & stderr
-        withForkWait  (evaluate $ rnf out) $ \waitOut ->
-         withForkWait (evaluate $ rnf err) $ \waitErr -> do
-
-          -- now write any input
-          unless (T.null input) $
-            ignoreSigPipe $ TIO.hPutStr inh input
-          -- hClose performs implicit hFlush, and thus may trigger a SIGPIPE
-          ignoreSigPipe $ SIO.hClose inh
-
-          -- wait on the output
-          waitOut
-          waitErr
-
-          -- TODO: isn’t this done by `withCreateProcess`?
-          SIO.hClose outh
-          SIO.hClose errh
-
-        -- wait on the process
-        ex <- P.waitForProcess ph
-
-        return (ex, out, err)
-
-
--- Copied from System.Process (process-1.6.4.0)
-
--- | Fork a thread while doing something else, but kill it if there's an
--- exception.
---
--- This is important in the cases above because we want to kill the thread
--- that is holding the Handle lock, because when we clean up the process we
--- try to close that handle, which could otherwise deadlock.
---
-withForkWait :: IO () -> (IO () ->  IO a) -> IO a
-withForkWait async body = do
-  waitVar <- newEmptyMVar :: IO (MVar (Either SomeException ()))
-  mask $ \restore -> do
-    tid <- forkIO $ try (restore async) >>= putMVar waitVar
-    let wait = takeMVar waitVar >>= either throwIO return
-    restore (body wait) `onException` killThread tid
-
-ignoreSigPipe :: IO () -> IO ()
-ignoreSigPipe = handle $ \e -> case e of
-  IOError { ioe_type  = ResourceVanished
-          , ioe_errno = Just ioe }
-    | Errno ioe == ePIPE -> return ()
-  _ -> throwIO e
+    (ex, TE.decodeUtf8 -> out, TE.decodeUtf8 -> err) <- C.sourceProcessWithStreams cp_opts stdInC stdOutC stdErrC
+    evaluate $ rnf out
+    evaluate $ rnf err
+    pure (ex, out, err)

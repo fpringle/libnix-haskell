@@ -37,8 +37,9 @@ import Control.Monad.Except (MonadError)
 data RunOptions m = RunOptions {
   logFn :: LogFn m,
   -- ^ The command line logging function.
-  executables :: Executables
+  executables :: Executables,
   -- ^ A record of all executables this library could need.
+  printStdErr :: Bool
 }
 
 -- | Logging function to call before running a command.
@@ -90,7 +91,8 @@ defaultExecutables = Executables {
 defaultRunOptions :: Monad m => RunOptions m
 defaultRunOptions = RunOptions {
   logFn = LogFn (\_prog _args -> pure ()),
-  executables = defaultExecutables
+  executables = defaultExecutables,
+  printStdErr = False
 }
 
 -- | Calls a command that returns an error and the whole stderr on failure.
