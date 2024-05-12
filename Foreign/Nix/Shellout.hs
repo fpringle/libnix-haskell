@@ -28,6 +28,7 @@ module Foreign.Nix.Shellout
 , parseInstRealize
 , parseInstRealizeMany
 , NixError(..)
+, throwErrorWithoutStderr
   -- * Types
 , NixExpr
 
