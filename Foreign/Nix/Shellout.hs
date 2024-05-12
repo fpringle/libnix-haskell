@@ -18,7 +18,7 @@ module Foreign.Nix.Shellout
   parseNixExpr, ParseError(..)
   -- ** Instantiate
 , instantiate, instantiateOne, InstantiateError(..)
-, eval
+, eval, evalJSON
   -- ** Realize
 , realize, RealizeError(..)
   -- ** Build
@@ -41,9 +41,11 @@ module Foreign.Nix.Shellout
 import Control.Error ( throwE, tryLast, ExceptT)
 import Data.Text (stripPrefix, lines, isPrefixOf, Text)
 
+import qualified Data.Aeson as Aeson
 import qualified Foreign.Nix.Shellout.Helpers as Helpers
 import Foreign.Nix.Shellout.Types
 import qualified Data.Text as Text
+import qualified Data.Text.Encoding as TextE
 import System.Exit (ExitCode(ExitFailure, ExitSuccess))
 import Control.Monad ((>=>))
 import qualified System.FilePath as FilePath
@@ -91,6 +93,7 @@ parseParseError _           = UnknownParseError
 data InstantiateError
   = NotADerivation
     -- ^ the given expression does not evaluate to a derivaton
+  | JSONParseError Text
   | UnknownInstantiateError
     -- ^ catch-all error
   deriving (Show, Eq)
@@ -126,6 +129,13 @@ evalArgs (fmap unNixExpr -> exprs) args = do
 eval :: MonadIO m => [NixExpr] -> NixAction InstantiateError m [Text]
 eval exprs = evalArgs exprs []
 
+-- | Run nix-instantiate --eval --json and parse the JSON output.
+evalJSON :: (Aeson.FromJSON a, MonadIO m) => [NixExpr] -> NixAction InstantiateError m [a]
+evalJSON exprs = do
+  out <- evalArgs exprs ["--json"]
+  case traverse (Aeson.eitherDecodeStrict' . TextE.encodeUtf8) out of
+    Right as -> pure as
+    Left err -> throwErrorWithoutStderr $ JSONParseError (Text.pack err)
 
 parseInstantiateError :: Text -> InstantiateError
 parseInstantiateError
@@ -252,21 +262,22 @@ processOutputLines (out, err) = \case
 
 -- | Apply filePath p to constructor a if it’s a valid filepath
 fromNixFilePath :: Monad m => (String -> a) -> Text -> NixAction Text m a
-fromNixFilePath a p = NixAction $
+fromNixFilePath a p =
   if FilePath.isValid (Text.unpack p) then pure $ a (Text.unpack p)
-  else throwError $ NixActionError
-          { actionStderr = nostderr
-          , actionError = p <> " is not a filepath!" }
-  where nostderr = mempty
+  else throwErrorWithoutStderr $ p <> " is not a filepath!"
 
 -- | Check that a filepath is a real file (note that we don't check it's a valid nix file)
 nixFilePath :: MonadIO m => Text -> NixAction Text m NixFilePath
 nixFilePath p = do
   exists <- liftIO (Directory.doesFileExist ps)
   if exists then pure $ NixFilePath ps
-  else throwError $ NixActionError
-          { actionStderr = nostderr
-          , actionError = p <> " is not a file!" }
+  else throwErrorWithoutStderr $ p <> " is not a file!"
   where
-    nostderr = mempty
     ps = Text.unpack p
+
+throwErrorWithoutStderr :: Monad m => e -> NixAction e m a
+throwErrorWithoutStderr e =
+  throwError $ NixActionError
+    { actionError = e
+    , actionStderr = mempty
+    }
