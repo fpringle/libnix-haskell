@@ -10,6 +10,8 @@ module Foreign.Nix.Shellout.Types (
   StorePath(..),
   Derivation,
   Realized,
+  -- * Paths to Nix files
+  NixFilePath (..),
   -- * NixAction
   runNixAction,
   NixAction(..),
@@ -124,6 +126,11 @@ mapActionError f (NixAction act) = NixAction $ ReaderT $ \runOpts -> bimapExcept
 -- between 'Derivation' files and 'Realized' paths.
 newtype StorePath a = StorePath
   { unStorePath :: FilePath }
+  deriving (Eq, Show)
+
+-- | A path of a .nix file.
+newtype NixFilePath = NixFilePath
+  { unNixFilePath :: FilePath }
   deriving (Eq, Show)
 
 -- | A nix derivation is a complete build instruction that can be realized.

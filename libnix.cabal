@@ -33,6 +33,7 @@ library
                      , deepseq
                      , errors >=2.2.0
                      , filepath
+                     , directory
                      , mtl
                      , process
                      , text

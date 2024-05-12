@@ -30,6 +30,11 @@ module Foreign.Nix.Shellout
 , NixError(..)
   -- * Types
 , NixExpr
+
+  -- * File paths
+, nixFilePath
+
+  -- * Re-exports
 , module Foreign.Nix.Shellout.Types
 ) where
 
@@ -42,9 +47,10 @@ import qualified Data.Text as Text
 import System.Exit (ExitCode(ExitFailure, ExitSuccess))
 import Control.Monad ((>=>))
 import qualified System.FilePath as FilePath
+import qualified System.Directory as Directory
 import Data.Function ((&))
 import qualified Data.List as List
-import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.IO.Class (MonadIO (..))
 import Control.Monad.Except (throwError)
 
 ------------------------------------------------------------------------------
@@ -97,7 +103,7 @@ instantiate (fmap unNixExpr -> exprs) = do
   exec <- Helpers.getExecOr exeNixInstantiate "nix-instantiate"
   mapActionError parseInstantiateError
     $ evalNixOutput exec ( "-E" : exprs )
-      >>= traverse (toNixFilePath StorePath)
+      >>= traverse (fromNixFilePath StorePath)
 
 -- | Instantiate a parsed expression to derivations.
 --
@@ -148,7 +154,7 @@ storeOp op = do
   exec <- Helpers.getExecOr exeNixInstantiate "nix-store"
   mapActionError (const UnknownRealizeError)
     $ evalNixOutput exec op
-      >>= traverse (toNixFilePath StorePath)
+      >>= traverse (fromNixFilePath StorePath)
 
 ------------------------------------------------------------------------------
 -- Building
@@ -156,15 +162,15 @@ storeOp op = do
 data BuildError = UnknownBuildError
   deriving (Show, Eq)
 
-buildPaths :: MonadIO m => [FilePath] -> NixAction BuildError m [StorePath Realized]
-buildPaths fps = buildOp ( fmap Text.pack fps )
+buildPaths :: MonadIO m => [NixFilePath] -> NixAction BuildError m [StorePath Realized]
+buildPaths fps = buildOp ( fmap (Text.pack . unNixFilePath) fps )
 
 buildOp :: (MonadIO m) => [Text] -> NixAction BuildError m [StorePath Realized]
 buildOp op = do
   exec <- Helpers.getExecOr exeNixBuild "nix-build"
   mapActionError (const UnknownBuildError)
     $ evalNixOutput exec op
-      >>= traverse (toNixFilePath StorePath)
+      >>= traverse (fromNixFilePath StorePath)
 
 ------------------------------------------------------------------------------
 -- nix-env commands
@@ -241,10 +247,22 @@ processOutputLines (out, err) = \case
   ExitSuccess -> pure $ Data.Text.lines out
 
 -- | Apply filePath p to constructor a if it’s a valid filepath
-toNixFilePath :: Monad m => (String -> a) -> Text -> NixAction Text m a
-toNixFilePath a p = NixAction $
+fromNixFilePath :: Monad m => (String -> a) -> Text -> NixAction Text m a
+fromNixFilePath a p = NixAction $
   if FilePath.isValid (Text.unpack p) then pure $ a (Text.unpack p)
   else throwError $ NixActionError
           { actionStderr = nostderr
           , actionError = p <> " is not a filepath!" }
   where nostderr = mempty
+
+-- | Check that a filepath is a real file (note that we don't check it's a valid nix file)
+nixFilePath :: MonadIO m => Text -> NixAction Text m NixFilePath
+nixFilePath p = do
+  exists <- liftIO (Directory.doesFileExist ps)
+  if exists then pure $ NixFilePath ps
+  else throwError $ NixActionError
+          { actionStderr = nostderr
+          , actionError = p <> " is not a file!" }
+  where
+    nostderr = mempty
+    ps = Text.unpack p
