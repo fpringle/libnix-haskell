@@ -111,17 +111,21 @@ instantiate (fmap unNixExpr -> exprs) = do
 instantiateOne :: (MonadIO m) => NixExpr -> NixAction InstantiateError m [StorePath Derivation]
 instantiateOne = instantiate . pure
 
+-- | Evaluate Nix expressions using @--eval --strict -E@, plus arbitrary args at the end.
+evalArgs :: MonadIO m => [NixExpr] -> [Text] -> NixAction InstantiateError m [Text]
+evalArgs (fmap unNixExpr -> exprs) args = do
+  exec <- Helpers.getExecOr exeNixInstantiate "nix-instantiate"
+
+  mapActionError parseInstantiateError
+       $ evalNixOutput exec ( "--eval" : "--strict" : "-E" : exprs <> args)
+
 -- | Just tests if the expression can be evaluated.
 -- That doesn’t mean it has to instantiate however.
 --
 -- Runs @nix-instantiate@.
-eval :: MonadIO m => [NixExpr] -> NixAction InstantiateError m ()
-eval (fmap unNixExpr -> exprs) = do
-  exec <- Helpers.getExecOr exeNixInstantiate "nix-instantiate"
+eval :: MonadIO m => [NixExpr] -> NixAction InstantiateError m [Text]
+eval exprs = evalArgs exprs []
 
-  _instantiateOutput <- mapActionError parseInstantiateError
-       $ evalNixOutput exec ( "--eval" : "-E" : exprs)
-  pure ()
 
 parseInstantiateError :: Text -> InstantiateError
 parseInstantiateError
