@@ -21,6 +21,8 @@ module Foreign.Nix.Shellout
 , eval
   -- ** Realize
 , realize, RealizeError(..)
+  -- ** Build
+, buildPaths, BuildError(..)
   -- ** Helpers
 , addToStore
 , parseInstRealize
@@ -149,13 +151,30 @@ storeOp op = do
       >>= traverse (toNixFilePath StorePath)
 
 ------------------------------------------------------------------------------
+-- Building
+
+data BuildError = UnknownBuildError
+  deriving (Show, Eq)
+
+buildPaths :: MonadIO m => [FilePath] -> NixAction BuildError m [StorePath Realized]
+buildPaths fps = buildOp ( fmap Text.pack fps )
+
+buildOp :: (MonadIO m) => [Text] -> NixAction BuildError m [StorePath Realized]
+buildOp op = do
+  exec <- Helpers.getExecOr exeNixBuild "nix-build"
+  mapActionError (const UnknownBuildError)
+    $ evalNixOutput exec op
+      >>= traverse (toNixFilePath StorePath)
+
+------------------------------------------------------------------------------
 -- Convenience
 
 -- | Combines all error types that could happen.
 data NixError
   = ParseError ParseError
   | InstantiateError InstantiateError
-  | RealizeError RealizeError deriving (Show, Eq)
+  | RealizeError RealizeError
+  | BuildError BuildError deriving (Show, Eq)
 
 -- | A convenience function to directly realize a nix expression.
 -- Any errors are put into a combined error type.

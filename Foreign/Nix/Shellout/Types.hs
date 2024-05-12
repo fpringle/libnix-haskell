@@ -63,8 +63,10 @@ data Executables = Executables {
   -- ^ @nix-store@
   exeNixPrefetchUrl :: Maybe FilePath,
   -- ^ @nix-prefetch-url@; as of nix @2.3@, this executable comes with the nix distribution, so if @nix-store@ is available, this should also be available
-  exeNixPrefetchGit :: Maybe FilePath
+  exeNixPrefetchGit :: Maybe FilePath,
   -- ^ @nix-prefetch-git@; This is usually provided by the @nix-prefetch-scripts@ package and /not/ installed with nix
+  exeNixBuild :: Maybe FilePath
+  -- ^ @nix-build@
  }
 
 -- |  all executables are taken from @PATH@
@@ -73,7 +75,8 @@ defaultExecutables = Executables {
     exeNixInstantiate = Nothing,
     exeNixStore = Nothing,
     exeNixPrefetchUrl = Nothing,
-    exeNixPrefetchGit = Nothing
+    exeNixPrefetchGit = Nothing,
+    exeNixBuild = Nothing
   }
 
 -- |
