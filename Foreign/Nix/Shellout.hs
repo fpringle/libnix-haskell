@@ -17,13 +17,14 @@ module Foreign.Nix.Shellout
   -- ** Parse
   parseNixExpr, ParseError(..)
   -- ** Instantiate
-, instantiate, instantiateOne, InstantiateError(..)
-, eval, evalJSON
+, instantiate, instantiateOne, instantiateOneOne, InstantiateError(..)
+, eval, evalOne, evalOneOne
+, evalJSON, evalJSONOne, evalJSONOneOne
   -- ** Realize
-, realize, RealizeError(..)
+, realize, realizeOne, realizeOneOne, RealizeError(..)
   -- ** Build
-, build, BuildError(..)
-, buildExpr
+, build, buildOne, buildOneOne, BuildError(..)
+, buildExpr, buildExprOne, buildExprOneOne
   -- ** Helpers
 , addToStore
 , parseInstRealize
@@ -98,6 +99,7 @@ data InstantiateError
   | JSONParseError Text
   | UnknownInstantiateError
     -- ^ catch-all error
+  | InstantiateExpectedOneOutput
   deriving (Show, Eq)
 
 -- | Instantiate parsed expressions to derivations.
@@ -116,6 +118,9 @@ instantiate (fmap unNixExpr -> exprs) = do
 instantiateOne :: (MonadIO m) => NixExpr -> NixAction InstantiateError m [StorePath Derivation]
 instantiateOne = instantiate . pure
 
+instantiateOneOne :: (MonadIO m) => NixExpr -> NixAction InstantiateError m (StorePath Derivation)
+instantiateOneOne = instantiateOne >=> onlyOne InstantiateExpectedOneOutput
+
 -- | Evaluate Nix expressions using @--eval --strict -E@, plus arbitrary args at the end.
 evalArgs :: MonadIO m => [NixExpr] -> [Text] -> NixAction InstantiateError m [Text]
 evalArgs (fmap unNixExpr -> exprs) args = do
@@ -131,13 +136,28 @@ evalArgs (fmap unNixExpr -> exprs) args = do
 eval :: MonadIO m => [NixExpr] -> NixAction InstantiateError m [Text]
 eval exprs = evalArgs exprs []
 
+evalOne :: MonadIO m => NixExpr -> NixAction InstantiateError m [Text]
+evalOne = eval . pure
+
+evalOneOne :: MonadIO m => NixExpr -> NixAction InstantiateError m Text
+evalOneOne = evalOne >=> onlyOne InstantiateExpectedOneOutput
+
 -- | Run nix-instantiate --eval --json and parse the JSON output.
 evalJSON :: (Aeson.FromJSON a, MonadIO m) => [NixExpr] -> NixAction InstantiateError m [a]
 evalJSON exprs = do
-  out <- evalArgs exprs ["--json"]
-  case traverse (Aeson.eitherDecodeStrict' . TextE.encodeUtf8) out of
-    Right as -> pure as
+  evalArgs exprs ["--json"] >>= traverse parseJSON'
+
+parseJSON' :: (Aeson.FromJSON a, Monad m) => Text -> NixAction InstantiateError m a
+parseJSON' txt =
+  case Aeson.eitherDecodeStrict' . TextE.encodeUtf8 $ txt of
+    Right a -> pure a
     Left err -> throwErrorWithoutStderr $ JSONParseError (Text.pack err)
+
+evalJSONOne :: (Aeson.FromJSON a, MonadIO m) => NixExpr -> NixAction InstantiateError m [a]
+evalJSONOne = evalJSON . pure
+
+evalJSONOneOne :: (Aeson.FromJSON a, MonadIO m) => NixExpr -> NixAction InstantiateError m a
+evalJSONOneOne = evalJSONOne >=> onlyOne InstantiateExpectedOneOutput
 
 parseInstantiateError :: Text -> InstantiateError
 parseInstantiateError
@@ -149,7 +169,9 @@ parseInstantiateError _   = UnknownInstantiateError
 ------------------------------------------------------------------------------
 -- Realizing
 
-data RealizeError = UnknownRealizeError deriving (Show, Eq)
+data RealizeError
+  = RealizeExpectedOneOutput
+  | UnknownRealizeError deriving (Show, Eq)
 
 -- | Finally derivations are realized into full store outputs.
 -- This will typically take a while so it should be executed asynchronously.
@@ -158,6 +180,12 @@ data RealizeError = UnknownRealizeError deriving (Show, Eq)
 realize :: MonadIO m => [StorePath Derivation] -> NixAction RealizeError m [StorePath Realized]
 realize (fmap unStorePath -> ds) =
      storeOp ( "-r" : fmap Text.pack ds )
+
+realizeOne :: MonadIO m => StorePath Derivation -> NixAction RealizeError m [StorePath Realized]
+realizeOne = realize . pure
+
+realizeOneOne :: MonadIO m => StorePath Derivation -> NixAction RealizeError m (StorePath Realized)
+realizeOneOne = realizeOne >=> onlyOne RealizeExpectedOneOutput
 
 -- | Copy the given files or folders to the nix store and return their paths.
 --
@@ -175,14 +203,28 @@ storeOp op = do
 ------------------------------------------------------------------------------
 -- Building
 
-data BuildError = UnknownBuildError
+data BuildError
+  = BuildExpectedOneOutput
+  | UnknownBuildError
   deriving (Show, Eq)
 
 build :: MonadIO m => [NixFilePath] -> NixAction BuildError m [StorePath Realized]
 build fps = buildOp ( fmap (Text.pack . unNixFilePath) fps )
 
+buildOne :: MonadIO m => NixFilePath -> NixAction BuildError m [StorePath Realized]
+buildOne = build . pure
+
+buildOneOne :: MonadIO m => NixFilePath -> NixAction BuildError m (StorePath Realized)
+buildOneOne = buildOne >=> onlyOne BuildExpectedOneOutput
+
 buildExpr :: MonadIO m => [NixExpr] -> NixAction BuildError m [StorePath Realized]
 buildExpr exprs = buildOp ("-E" : fmap unNixExpr exprs)
+
+buildExprOne :: MonadIO m => NixExpr -> NixAction BuildError m [StorePath Realized]
+buildExprOne = buildExpr . pure
+
+buildExprOneOne :: MonadIO m => NixExpr -> NixAction BuildError m (StorePath Realized)
+buildExprOneOne = buildExprOne >=> onlyOne BuildExpectedOneOutput
 
 buildOp :: (MonadIO m) => [Text] -> NixAction BuildError m [StorePath Realized]
 buildOp op = do
@@ -286,3 +328,8 @@ throwErrorWithoutStderr e =
     { actionError = e
     , actionStderr = mempty
     }
+
+onlyOne :: Monad m => e -> [a] -> NixAction e m a
+onlyOne err = \case
+  [a] -> pure a
+  _ -> throwErrorWithoutStderr err
