@@ -22,7 +22,8 @@ module Foreign.Nix.Shellout
   -- ** Realize
 , realize, RealizeError(..)
   -- ** Build
-, buildPaths, BuildError(..)
+, build, BuildError(..)
+, buildExpr
   -- ** Helpers
 , addToStore
 , parseInstRealize
@@ -177,8 +178,11 @@ storeOp op = do
 data BuildError = UnknownBuildError
   deriving (Show, Eq)
 
-buildPaths :: MonadIO m => [NixFilePath] -> NixAction BuildError m [StorePath Realized]
-buildPaths fps = buildOp ( fmap (Text.pack . unNixFilePath) fps )
+build :: MonadIO m => [NixFilePath] -> NixAction BuildError m [StorePath Realized]
+build fps = buildOp ( fmap (Text.pack . unNixFilePath) fps )
+
+buildExpr :: MonadIO m => [NixExpr] -> NixAction BuildError m [StorePath Realized]
+buildExpr exprs = buildOp ("-E" : fmap unNixExpr exprs)
 
 buildOp :: (MonadIO m) => [Text] -> NixAction BuildError m [StorePath Realized]
 buildOp op = do
