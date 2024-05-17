@@ -37,6 +37,11 @@ data Executable =
   -- ^ a file path to the executable (can be relative or absolute)
   deriving Show
 
+execToText :: Executable -> Text
+execToText exec = case exec of
+  ExeFromPathEnv name -> name
+  ExeFromFilePath fp -> fp & Text.pack
+
 -- | Get an executable from the 'Executables' option (by its getter)
 -- or if not set use the given 'Text' as the name of the excutable
 -- to be looked up in @PATH@.
@@ -59,9 +64,7 @@ readProcess :: (MonadIO m)
             -- ^ arguments
             -> NixAction e m a
 readProcess with exec args = do
-  let exec' = case exec of
-        ExeFromPathEnv name -> name
-        ExeFromFilePath fp -> fp & Text.pack
+  let exec' = execToText exec
   -- log every call based on the LogFn the user passed
   (LogFn l) <- asks logFn
   lift $ l exec' args
