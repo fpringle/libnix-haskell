@@ -26,7 +26,7 @@ library
   exposed-modules:     Foreign.Nix.Shellout
                      , Foreign.Nix.Shellout.Prefetch
                      , Foreign.Nix.Shellout.Types
-  other-modules:       Foreign.Nix.Shellout.Helpers
+                     , Foreign.Nix.Shellout.Helpers
   build-depends:       base >=4.9 && <5.0
                      , aeson >=1.0.0.0
                      , bytestring
