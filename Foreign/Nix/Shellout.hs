@@ -42,6 +42,7 @@ module Foreign.Nix.Shellout
 ) where
 
 import Control.Error ( throwE, tryLast, ExceptT)
+import Control.Monad.Reader (asks)
 import Data.Text (stripPrefix, lines, isPrefixOf, Text)
 
 import qualified Data.Aeson as Aeson
@@ -291,7 +292,9 @@ evalNixOutput :: (MonadIO m)
               -- ^ arguments
               -> NixAction Text m [Text]
               -- ^ error: (stderr, errormsg), success: [path]
-evalNixOutput = Helpers.readProcess processOutputLines
+evalNixOutput exec args = do
+  extraArgs <- asks extraNixArgs
+  Helpers.readProcess processOutputLines exec (args <> extraArgs)
 
 -- | Just a helper function needed by 'evalNixOutput' and 'evalNixOutputLast'.
 processOutputLines :: MonadIO m => (Text, Text) -> ExitCode -> ExceptT Text m [Text]

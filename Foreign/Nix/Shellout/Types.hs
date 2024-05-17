@@ -41,7 +41,9 @@ data RunOptions m = RunOptions {
   -- ^ The command line logging function.
   executables :: Executables,
   -- ^ A record of all executables this library could need.
-  printStdErr :: Bool
+  printStdErr :: Bool,
+  -- ^ Whether or not to print the process's stderr to stderr.
+  extraNixArgs :: [Text]
 }
 
 -- | Logging function to call before running a command.
@@ -94,7 +96,8 @@ defaultRunOptions :: Monad m => RunOptions m
 defaultRunOptions = RunOptions {
   logFn = LogFn (\_prog _args -> pure ()),
   executables = defaultExecutables,
-  printStdErr = False
+  printStdErr = False,
+  extraNixArgs = []
 }
 
 -- | Calls a command that returns an error and the whole stderr on failure.
